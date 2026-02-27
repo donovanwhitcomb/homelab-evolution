@@ -50,6 +50,7 @@ This hardware provides significant headroom for virtualization, storage experime
   - Proxmox host
   - Laptop
   - Mobile device
+  - Primary PC
 - Verified secure remote access to the Proxmox web UI and shell.
 - Avoided raw port-forwarding in favor of encrypted mesh VPN access.
 
