@@ -1,0 +1,65 @@
+services:
+  valheim:
+    image: lloesche/valheim-server
+    container_name: valheim
+    restart: unless-stopped
+    ports:
+      - "${VALHEIM_PORT}:${VALHEIM_PORT}/udp"
+      - "${VALHEIM_PORT_PLUS1}:${VALHEIM_PORT_PLUS1}/udp"
+    environment:
+      SERVER_NAME: ${SERVER_NAME}
+      WORLD_NAME: ${WORLD_NAME}
+      SERVER_PASS: ${SERVER_PASS}
+      SERVER_PUBLIC: "false"
+      TZ: ${TZ}
+    volumes:
+      - ./config:/config
+      - ./data:/opt/valheim
+    cap_add:
+      - sys_nice
+```
+
+---
+
+**4. `docker/valheim/.env.example`**
+```
+# Valheim Server Environment Variables
+# Copy this to .env and fill in your values — never commit .env
+
+# Server display name
+SERVER_NAME=
+
+# World save name
+WORLD_NAME=
+
+# Server password
+SERVER_PASS=
+
+# UDP ports (Valheim uses two consecutive ports)
+VALHEIM_PORT=
+VALHEIM_PORT_PLUS1=
+
+# Timezone (e.g. America/Chicago)
+TZ=
+```
+
+---
+
+**5. `docker/.gitignore`** (one gitignore covers both subfolders)
+```
+# Environment files - never commit secrets
+.env
+
+# Minecraft world data and server files
+data/
+logs/
+crash-reports/
+*.log
+
+# Valheim world saves and config
+config/
+saves/
+
+# OS junk
+.DS_Store
+Thumbs.db

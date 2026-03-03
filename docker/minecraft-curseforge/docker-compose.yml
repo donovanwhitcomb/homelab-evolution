@@ -1,0 +1,54 @@
+services:
+  mc-atm10:
+    image: itzg/minecraft-server
+    container_name: mc-atm10
+    restart: unless-stopped
+    ports:
+      - "${MC_PORT}:25565"
+    environment:
+      EULA: "TRUE"
+      TYPE: CURSEFORGE
+      CF_SLUG: all-the-mods-10
+      MEMORY: ${MEMORY}
+      USE_AIKAR_FLAGS: "false"
+      JVM_XX_OPTS: >-
+        -XX:+UseG1GC
+        -XX:+ParallelRefProcEnabled
+        -XX:MaxGCPauseMillis=200
+        -XX:+UnlockExperimentalVMOptions
+        -XX:+DisableExplicitGC
+        -XX:G1NewSizePercent=30
+        -XX:G1MaxNewSizePercent=40
+        -XX:G1HeapRegionSize=8M
+        -XX:G1ReservePercent=20
+        -XX:G1HeapWastePercent=5
+        -XX:G1MixedGCCountTarget=4
+        -XX:InitiatingHeapOccupancyPercent=15
+        -XX:G1MixedGCLiveThresholdPercent=90
+        -XX:G1RSetUpdatingPauseTimePercent=5
+        -XX:SurvivorRatio=32
+        -XX:+PerfDisableSharedMem
+        -XX:MaxTenuringThreshold=1
+      SWAP_SIZE: 0
+      TZ: ${TZ}
+    volumes:
+      - ./data:/data
+    stdin_open: true
+    tty: true
+```
+
+---
+
+**2. `docker/minecraft-curseforge/.env.example`**
+```
+# Minecraft ATM10 Environment Variables
+# Copy this to .env and fill in your values — never commit .env
+
+# External port to expose the server on
+MC_PORT=
+
+# JVM heap size (recommend ~50% of total RAM)
+MEMORY=
+
+# Timezone (e.g. America/Chicago)
+TZ=

@@ -1,0 +1,16 @@
+# Environment files - never commit secrets
+!.env.example
+
+# Minecraft world data and server files
+data/
+logs/
+crash-reports/
+*.log
+
+# Valheim world saves and config
+config/
+saves/
+
+# OS junk
+.DS_Store
+Thumbs.db
