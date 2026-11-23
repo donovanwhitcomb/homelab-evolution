@@ -11,6 +11,9 @@ crash-reports/
 config/
 saves/
 
+# Audiobookshelf metadata/cache (config/ already ignored above)
+metadata/
+
 # OS junk
 .DS_Store
 Thumbs.db
