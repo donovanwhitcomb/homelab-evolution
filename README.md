@@ -60,11 +60,22 @@ All services defined as Docker Compose stacks. Server files and configs version-
 
 ### media-01 (VM 102)
 
-- Ubuntu 22.04.5 LTS
-- Static LAN IP: 10.0.0.211
-- NFS mount from Proxmox `tank` pool (`/mnt/media` → movies, tv, music)
-- Intel iGPU passthrough planned for Plex hardware transcoding
-- Docker installed, media stack being brought online
+Rebuilt from scratch on 2026-11-22. See the [CHANGELOG](./CHANGELOG.md) for the full write-up.
+
+- Ubuntu Server 24.04 LTS (GA 6.8 kernel), headless, managed through web GUIs
+- 4 vCPU (`x86-64-v3`), 8 GB RAM, 64 GB disk on `local-lvm`, UEFI with Secure Boot keys, QEMU guest agent
+- Reserved LAN IP (DHCP reservation), plus Tailscale (key expiry disabled)
+- Same hybrid-CPU GRUB parameters as the host: `nosoftlockup split_lock_detect=off nohz_full=off`
+- Media storage: **virtiofs** share of `tank/media` (ZFS, `recordsize=1M`) mounted at `/mnt/media`, auto-mounted via fstab (replaced the old NFS mount)
+- Docker Engine (official install)
+
+**Active services:**
+
+- **Audiobookshelf** — audiobook server, library on `tank/media/audiobooks` ([compose](./docker/audiobookshelf/docker-compose.yml))
+- **Portainer CE** — Docker management GUI ([compose](./docker/portainer/docker-compose.yml))
+- **Cockpit** — web admin for the VM
+
+**Next:** Plex with hardware transcoding (Intel iGPU passthrough, or a dedicated Intel Arc card), then the arr suite
 
 ### Monitoring Stack
 
@@ -121,6 +132,7 @@ These are not just “things I learned” — these are real failures that took 
 - Monitoring stack deployment and configuration (Prometheus, Grafana)
 - Kernel-level stability debugging (GRUB flags, CPU frequency scaling)
 - NFS configuration and persistent mounts
+- virtiofs host-to-VM storage passthrough (Proxmox directory mappings + ZFS datasets)
 - JVM performance tuning (heap sizing, GC flags)
 - Infrastructure documentation and change management
 
@@ -129,7 +141,12 @@ These are not just “things I learned” — these are real failures that took 
 ## Roadmap
 
 - [ ] iGPU passthrough to media-01 for Plex hardware transcoding
+- [x] Rebuild media-01 on Ubuntu 24.04 with virtiofs media storage (2026-11-22)
+- [x] Audiobookshelf on media-01 (2026-11-22)
 - [ ] Bring full media stack online (Plex + arr suite)
+- [ ] Security hardening pass on media-01 and the Proxmox host
+- [ ] Encrypted ZFS dataset on `tank` for personal data
+- [ ] Node Exporter on media-01 → Prometheus/Grafana
 - [ ] VLAN segmentation between lab, game servers, and media
 - [ ] Automated off-site backup strategy (tank pool)
 - [ ] Self-hosted password manager (Vaultwarden)

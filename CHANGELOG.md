@@ -1,5 +1,200 @@
 # Homelab Evolution Log
 
+## 2026-11-22 — media-01 Rebuild, Storage Passthrough & First Media Apps
+
+### Summary
+
+Destroyed and rebuilt **media-01 (VM 102)** from scratch on Ubuntu Server 24.04 LTS, replaced the old NFS-based media mount with a **virtiofs** share from the `tank` ZFS pool, and deployed the first apps: **Audiobookshelf**, **Cockpit**, and **Portainer**. Also confirmed the host is ready for Intel iGPU passthrough (Plex is the next phase).
+
+Management approach for this VM: headless Ubuntu Server, managed through web GUIs (Cockpit for the OS, Portainer for Docker). No desktop environment, to keep overhead low.
+
+---
+
+### Incident — Lost Password on the Old media-01
+
+* The login password for the old media-01 had been lost, so the VM couldn't be reached over SSH.
+* Tried resetting it through Ubuntu recovery mode from the Proxmox console:
+  * Ubuntu hides the GRUB menu by default. Pressing `Esc` too many times dropped to the `grub>` command line, and `normal` just carried on booting.
+  * While the guest was sitting at GRUB, Proxmox **Reboot/Shutdown** tasks failed (`can't lock file`, `VM quit/powerdown failed`) because nothing in the guest was answering ACPI requests. A hard **Stop** was needed.
+  * Got to the firmware boot menu (OVMF) and then the GRUB menu, but the console display corrupted when booting the recovery kernel.
+* No media stack had been deployed on the old VM yet, so a clean rebuild was faster and lower risk than continuing the recovery.
+
+**Resolution**
+
+* Removed VM 102 in Proxmox with **Purge from job configurations** and **Destroy unreferenced disks owned by guest** both checked (task log: `VM 102 - Destroy: OK`).
+* Rebuilt it as a new VM 102, `media-01`.
+
+**Lesson:** store every credential in a password manager when it's created.
+
+---
+
+### Added — New media-01 VM (VM 102)
+
+**Proxmox VM configuration** (from the Create VM confirmation screen):
+
+| Setting | Value |
+|---|---|
+| Machine | q35 |
+| BIOS | OVMF (UEFI), EFI disk on `local-lvm`, `pre-enrolled-keys=1` (Secure Boot keys) |
+| CPU | 1 socket × 4 cores, type `x86-64-v3` (hides the i5-13500's hybrid P/E-core layout from the guest) |
+| Memory | 8192 MB |
+| Disk | `scsi0` — 64 GB on `local-lvm`, `discard=on`, `ssd=on`, `iothread=on` |
+| SCSI controller | VirtIO SCSI single |
+| Network | VirtIO on `vmbr0`, Proxmox firewall on |
+| QEMU guest agent | Enabled |
+| HA / TPM | Not used (single node; not needed for Linux) |
+
+**OS install**
+
+* Ubuntu Server **24.04.4** ISO. The installer self-updated to the 24.04.5 installer (subiquity) at the start.
+* Caught at the confirmation screen: the ISO was first set to **22.04.5** by mistake and was switched to 24.04.4 before the VM was created.
+* Network: DHCP on the VirtIO NIC.
+* Storage: whole disk, **no LVM, no disk encryption**
+  * `/` — 62.948 GB ext4
+  * `/boot/efi` — 1.049 GB fat32
+  * Encryption was skipped on purpose. A passphrase at every boot would leave an unattended server stuck at a prompt after reboots or power outages. Sensitive data will go in an encrypted ZFS dataset on `tank` instead.
+* OpenSSH server installed during setup.
+
+**Post-install**
+
+* `sudo apt update && sudo apt full-upgrade -y`
+* Applied the same hybrid-CPU stability parameters used on the Proxmox host and docker-01, in `/etc/default/grub`:
+
+  ```
+  GRUB_CMDLINE_LINUX_DEFAULT="nosoftlockup split_lock_detect=off nohz_full=off quiet"
+  ```
+
+  Then `sudo update-grub && sudo reboot`. Checked `cat /proc/cmdline` to confirm all three parameters are active on the GA 6.8 kernel.
+
+* **Tailscale** installed with the official script (`curl -fsSL https://tailscale.com/install.sh | sh`). Node `media-01` is connected, and **key expiry is disabled** in the admin console. The old media-01 node had been removed beforehand so the new one could keep the `media-01` name.
+* **DHCP reservation** for media-01 set on the router.
+* **Claude Code** installed (`curl -fsSL https://claude.ai/install.sh | bash`) to `~/.local/bin`. `~/.local/bin` added to `PATH` in `~/.bashrc`.
+* **Docker** installed with the official script (`curl -fsSL https://get.docker.com | sudo sh`).
+  * Rootless mode was not used, because it complicates GPU device access and storage mount permissions.
+  * Admin user added to the `docker` group (`sudo usermod -aG docker $USER`). Tested with `docker run hello-world`.
+
+---
+
+### Changed — Media Storage: NFS → virtiofs
+
+The old media-01 used an NFS mount from the Proxmox host. The new VM uses **virtiofs**, Proxmox's built-in way to pass a host directory straight into a VM.
+
+**ZFS (on the Proxmox host)**
+
+```
+zfs set recordsize=1M tank/media          # tuned for large media files; children inherit it
+zfs create tank/media/audiobooks
+chown -R <uid>:<gid> /tank/media          # UID/GID of the admin user inside media-01
+```
+
+Resulting datasets:
+
+```
+NAME                    USED  AVAIL  REFER  MOUNTPOINT
+tank                   10.4G  10.8T    96K  /tank
+tank/backups           10.4G  10.8T  10.4G  /tank/backups
+tank/media              192K  10.8T    96K  /tank/media
+tank/media/audiobooks    96K  10.8T    96K  /tank/media/audiobooks
+```
+
+**Proxmox**
+
+* Datacenter → **Directory Mappings** → `media` → `/tank/media` on node `homelab`.
+  * The parent `/tank/media` is mapped (not just `audiobooks`), so future child datasets are shared without new mappings.
+* VM 102 → Hardware → Add → **Virtiofs** → directory ID `media`, default options (no xattr/ACL/direct IO).
+* Full VM stop/start so the new device would attach.
+
+**Inside media-01**
+
+```
+sudo mkdir -p /mnt/media
+sudo mount -t virtiofs media /mnt/media
+echo 'media /mnt/media virtiofs defaults,nofail 0 0' | sudo tee -a /etc/fstab
+```
+
+**Verification**
+
+* `ls -la /mnt/media` shows `audiobooks`, owned by the VM's admin user.
+* Wrote `/mnt/media/audiobooks/test-from-vm` inside the VM and confirmed it appeared at `/tank/media/audiobooks/` on the host. So writes cross the ZFS child-dataset boundary correctly.
+* Unmounted and ran `sudo mount -a`, which remounted cleanly from fstab.
+
+---
+
+### Added — Audiobookshelf
+
+* Compose stack at `~/docker/audiobookshelf/` (copy in [`docker/audiobookshelf/`](./docker/audiobookshelf/)).
+* Image `ghcr.io/advplyr/audiobookshelf:latest`.
+* Host port set with `ABS_PORT` in `.env` (see `.env.example`), mapped to container port 80.
+* Library: `/mnt/media/audiobooks` (on `tank`) → `/audiobooks`.
+* `config/` (SQLite database) and `metadata/` are kept on the VM's local disk, not on the virtiofs share.
+* Root user created through the initial setup screen.
+* Accessed over Tailscale. The iOS client **SoundLeaf** connects to the server.
+
+---
+
+### Added — Cockpit (web admin for the VM)
+
+```
+sudo apt install -y cockpit && sudo systemctl enable --now cockpit.socket
+```
+
+* Web UI over HTTPS (self-signed certificate). Logs in with the VM's Linux account.
+
+---
+
+### Added — Portainer CE (web GUI for Docker)
+
+* Compose stack at `~/docker/portainer/` (copy in [`docker/portainer/`](./docker/portainer/)).
+* Image `portainer/portainer-ce:lts`.
+* Host port set with `PORTAINER_PORT` in `.env` (see `.env.example`).
+* First-run setup required a **setup token** from the container logs (`docker logs portainer`). Edge compute features left disabled.
+* Dashboard shows the `audiobookshelf` and `portainer` stacks.
+
+---
+
+### Verification — Services Listening on media-01
+
+Checked with `sudo ss -tlnp`. SSH, Cockpit, Portainer and Audiobookshelf were all listening, and DNS (systemd-resolved) was bound to localhost only.
+
+---
+
+### Investigation — iGPU Passthrough Readiness (for Plex)
+
+On the Proxmox host:
+
+```
+dmesg | grep -i -e DMAR -e IOMMU
+lspci -nn | grep -i -e vga -e display
+```
+
+* IOMMU (VT-d) is active: DMAR units initialized, IRQ remapping enabled in x2apic mode, default domain type `Translated`.
+* iGPU: `00:02.0 VGA compatible controller [0300]: Intel Corporation AlderLake-S GT1 [8086:4680]` (UHD 770 on the i5-13500), added to **IOMMU group 0**.
+* Passthrough **not done yet.** Deciding between:
+  * full iGPU passthrough to media-01 (the host loses its own video output), or
+  * buying an Intel Arc card (A380 is the one being considered) for Plex and leaving the iGPU on the host.
+
+---
+
+### Known Issues / Open Items
+
+* **Not verified yet:**
+  * that VM 102's minimum memory equals its maximum (needed for PCI passthrough)
+  * that the iGPU is the only device in its IOMMU group
+* A security hardening pass on media-01 and the Proxmox host is pending. Details are tracked privately.
+* Leftover empty plain directories in `/tank/media` from the March setup need cleaning up.
+* Deliberately staying on Ubuntu 24.04 LTS (supported to 2029) rather than upgrading to 26.04 while the media stack is built out.
+
+---
+
+### Outcome
+
+* media-01 rebuilt on Ubuntu Server 24.04 with the GA 6.8 kernel, hybrid-CPU GRUB fix, Tailscale (no key expiry), reserved LAN IP, Docker, and Claude Code.
+* Media storage moved from NFS to **virtiofs**, backed by a dedicated ZFS dataset (`tank/media/audiobooks`, `recordsize=1M`), with an auto-mount at boot.
+* **Audiobookshelf**, **Cockpit**, and **Portainer** running and reachable over Tailscale.
+* Host confirmed ready for GPU passthrough. Plex is the next phase.
+
+---
+
 ## 2026-03-09 — Monitoring Stack Deployment & ATM10 Crash
 
 ### Incident — ATM10 Crash (Reliquary Mod SIGSEGV)
